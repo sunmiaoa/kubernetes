@@ -167,13 +167,13 @@ var (
 				},
 				{
 					label:  eventLabelName,
-					values: clusterEventsToLabels(schedframework.AllEvents),
+					values: schedframework.AllClusterEventLabels(),
 				},
 			},
 			"scheduler_event_handling_duration_seconds": {
 				{
 					label:  eventLabelName,
-					values: clusterEventsToLabels(schedframework.AllEvents),
+					values: schedframework.AllClusterEventLabels(),
 				},
 			},
 		},
@@ -203,14 +203,6 @@ var (
 		names.VolumeZone,
 	}
 )
-
-func clusterEventsToLabels(events []schedframework.ClusterEvent) []string {
-	labels := make([]string, 0, len(events))
-	for _, event := range events {
-		labels = append(labels, event.Label)
-	}
-	return labels
-}
 
 // testCase defines a set of test cases that intends to test the performance of
 // similar workloads of varying sizes with shared overall settings such as
@@ -1053,6 +1045,9 @@ func setupTestCase(t testing.TB, tc *testCase, featureGates map[featuregate.Feat
 }
 
 func featureGatesMerge(src map[featuregate.Feature]bool, overrides map[featuregate.Feature]bool) map[featuregate.Feature]bool {
+	if len(src) == 0 {
+		return maps.Clone(overrides)
+	}
 	result := maps.Clone(src)
 	for feature, enabled := range overrides {
 		result[feature] = enabled
@@ -1253,7 +1248,7 @@ func compareMetricWithThreshold(items []DataItem, threshold float64, metricSelec
 }
 
 func checkEmptyInFlightEvents() error {
-	labels := append(clusterEventsToLabels(schedframework.AllEvents), metrics.PodPoppedInFlightEvent)
+	labels := append(schedframework.AllClusterEventLabels(), metrics.PodPoppedInFlightEvent)
 	for _, label := range labels {
 		value, err := testutil.GetGaugeMetricValue(metrics.InFlightEvents.WithLabelValues(label))
 		if err != nil {
@@ -1702,21 +1697,15 @@ func getNodePreparer(prefix string, cno *createNodesOp, clientset clientset.Inte
 		nodeStrategy = cno.UniqueNodeLabelStrategy
 	}
 
+	nodeTemplate := StaticNodeTemplate(makeBaseNode(prefix))
 	if cno.NodeTemplatePath != nil {
-		node, err := getNodeSpecFromFile(cno.NodeTemplatePath)
-		if err != nil {
-			return nil, err
-		}
-		return framework.NewIntegrationTestNodePreparerWithNodeSpec(
-			clientset,
-			[]testutils.CountToStrategy{{Count: cno.Count, Strategy: nodeStrategy}},
-			node,
-		), nil
+		nodeTemplate = nodeTemplateFromFile(*cno.NodeTemplatePath)
 	}
-	return framework.NewIntegrationTestNodePreparer(
+
+	return NewIntegrationTestNodePreparer(
 		clientset,
 		[]testutils.CountToStrategy{{Count: cno.Count, Strategy: nodeStrategy}},
-		prefix,
+		nodeTemplate,
 	), nil
 }
 
@@ -2103,9 +2092,11 @@ func getPodStrategy(cpo *createPodsOp) (testutils.TestPodCreateStrategy, error) 
 	return testutils.NewCreatePodWithPersistentVolumeStrategy(pvcTemplate, getCustomVolumeFactory(pvTemplate), podTemplate), nil
 }
 
-func getNodeSpecFromFile(path *string) (*v1.Node, error) {
+type nodeTemplateFromFile string
+
+func (f nodeTemplateFromFile) GetNodeTemplate(index, count int) (*v1.Node, error) {
 	nodeSpec := &v1.Node{}
-	if err := getSpecFromFile(path, nodeSpec); err != nil {
+	if err := getSpecFromTextTemplateFile(string(f), map[string]any{"Index": index, "Count": count}, nodeSpec); err != nil {
 		return nil, fmt.Errorf("parsing Node: %w", err)
 	}
 	return nodeSpec, nil
