@@ -534,10 +534,11 @@ func shouldRestartOnFailure(pod *v1.Pod) bool {
 
 func containerSucceeded(c *v1.Container, podStatus *kubecontainer.PodStatus) bool {
 	cStatus := podStatus.FindContainerStatusByName(c.Name)
-	if cStatus == nil || cStatus.State == kubecontainer.ContainerStateRunning {
+	if cStatus == nil {
 		return false
 	}
-	return cStatus.ExitCode == 0
+	// Container has exited, with an exit code of 0.
+	return cStatus.State == kubecontainer.ContainerStateExited && cStatus.ExitCode == 0
 }
 
 func isInPlacePodVerticalScalingAllowed(pod *v1.Pod) bool {
@@ -1538,7 +1539,7 @@ func (m *kubeGenericRuntimeManager) GetPodStatus(ctx context.Context, uid kubety
 
 	sandboxStatuses := []*runtimeapi.PodSandboxStatus{}
 	containerStatuses := []*kubecontainer.Status{}
-	var timestamp time.Time
+	timestamp := time.Now()
 
 	podIPs := []string{}
 	for idx, podSandboxID := range podSandboxIDs {
@@ -1582,7 +1583,7 @@ func (m *kubeGenericRuntimeManager) GetPodStatus(ctx context.Context, uid kubety
 			} else {
 				// Get the statuses of all containers visible to the pod and
 				// timestamp from sandboxStatus.
-				timestamp = time.Unix(resp.Timestamp, 0)
+				timestamp = time.Unix(0, resp.Timestamp)
 				for _, cs := range resp.ContainersStatuses {
 					cStatus := m.convertToKubeContainerStatus(cs)
 					containerStatuses = append(containerStatuses, cStatus)
